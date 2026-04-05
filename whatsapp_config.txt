@@ -1,0 +1,77 @@
+# ============================================================
+#  CONFIGURATION GROUPES WHATSAPP — DIGEST TELEGRAM
+#  Catégories assignées d'après le code couleur du PDF
+#  Format : NOM_GROUPE | CHAT_ID | OPTIONS
+# ============================================================
+#  SURVEILLER=OUI  → inclus dans le résumé quotidien
+#  SURVEILLER=NON  → ignoré
+#  URGENT=OUI      → à ajouter manuellement sur les groupes
+#                    qui doivent déclencher une alerte immédiate
+# ============================================================
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : Air France
+# ------------------------------------------------------------
+
+Alumni CADETS AF/TO             | 120363302197217467@g.us     | SURVEILLER=OUI
+Baby captain                    | 120363404106107930@g.us     | SURVEILLER=OUI
+Bons plans escales              | 120363168265500873@g.us     | SURVEILLER=OUI
+Objets trouvés                  | 120363166160530025@g.us     | SURVEILLER=OUI
+Échange Planning CDB            | 120363421196961847@g.us     | SURVEILLER=OUI
+Petites annonces                | 120363422919799905@g.us     | SURVEILLER=OUI
+Pilotes A220 AF (petit)         | 120363149786131343@g.us     | SURVEILLER=OUI
+Pilotes A220 AF (grand)         | 120363165716675002@g.us     | SURVEILLER=OUI
+Techniques A220                 | 120363149512732903@g.us     | SURVEILLER=OUI
+Touchée Escale                  | 120363169233386853@g.us     | SURVEILLER=OUI
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : Amis
+# ------------------------------------------------------------
+
+Bounkazi - Petitprez            | 120363402448781329@g.us     | SURVEILLER=OUI
+Bravo l'équipe                  | 33677038847-1632938745@g.us | SURVEILLER=OUI
+Cadets 954                      | 33630801607-1598798444@g.us | SURVEILLER=OUI
+Cantiliens en balade            | 120363142959191940@g.us     | SURVEILLER=OUI
+KD954                           | 33630801607-1539625446@g.us | SURVEILLER=OUI
+Le Gang de la Nature            | 120363403737555550@g.us     | SURVEILLER=OUI
+Pilotes                         | 120363043083287737@g.us     | SURVEILLER=OUI
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : École
+# ------------------------------------------------------------
+
+Classe CM1 2025/2026            | 33786546262-1624980078@g.us | SURVEILLER=OUI
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : Provinciaux
+# ------------------------------------------------------------
+
+Covoiturage PN Annecy Gva       | 33631170345-1555090917@g.us | SURVEILLER=OUI
+GP73                            | 33675278668-1541160690@g.us | SURVEILLER=OUI
+Infos diverses bons plans du 74 | 120363421181047943@g.us     | SURVEILLER=OUI
+Infos routières/retards vols    | 120363403907045355@g.us     | SURVEILLER=OUI
+Navigants Annecy GVA            | 120363403497790212@g.us     | SURVEILLER=OUI
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : Famille
+# ------------------------------------------------------------
+
+Jana a Petr a Lucie a Dim       | 33643188786-1614104442@g.us | SURVEILLER=OUI
+Famille Petitprez               | 120363024065990551@g.us     | SURVEILLER=OUI
+Maman, Papa & Dimitry           | 120363043270136908@g.us     | SURVEILLER=OUI
+Petitprez family                | 120363400101696452@g.us     | SURVEILLER=OUI
+Rodinka                         | 420728476972-1555060058@g.us| SURVEILLER=OUI
+Rodinka "65"                    | 120363027833908666@g.us     | SURVEILLER=OUI
+Soutien à maman                 | 120363352764988925@g.us     | SURVEILLER=OUI
+
+
+# ------------------------------------------------------------
+#  CATEGORIE : Patinage
+# ------------------------------------------------------------
+
+Groupe Tremplin 25-26           | 120363420934275852@g.us     | SURVEILLER=OUI
