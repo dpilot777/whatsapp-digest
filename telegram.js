@@ -5,8 +5,14 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let bot;
 
-function initBot(onResumeCommand) {
-  bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+async function initBot(onResumeCommand) {
+  // Stop any stale polling session first
+  const tmp = new TelegramBot(TELEGRAM_BOT_TOKEN);
+  await tmp.deleteWebHook({ drop_pending_updates: true });
+
+  bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
+    polling: { interval: 2000, autoStart: true, params: { timeout: 10 } },
+  });
 
   bot.onText(/\/resume/, async (msg) => {
     if (String(msg.chat.id) !== String(TELEGRAM_CHAT_ID)) return;
@@ -20,6 +26,7 @@ function initBot(onResumeCommand) {
   });
 
   bot.on('polling_error', (err) => {
+    if (err.message && err.message.includes('409')) return; // ignore transient 409
     console.error('Telegram polling error:', err.message);
   });
 
