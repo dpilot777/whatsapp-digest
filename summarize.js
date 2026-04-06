@@ -10,7 +10,15 @@ async function summarizeMessages(groupName, messages) {
     .map(m => `${m.author}: ${m.body}`)
     .join('\n');
 
-  const prompt = `Résume cette conversation WhatsApp du groupe "${groupName}" en MAXIMUM 300 caractères (pas de mots coupés). Sois concis, factuel. Rédige TOUJOURS en français, même si les messages sont en tchèque, anglais ou autre langue — traduis et résume en français. Ne commence pas par "Le groupe..." ou "Les membres...". Va droit au sujet principal.
+  const prompt = `Résume cette conversation WhatsApp du groupe "${groupName}".
+
+Règles :
+- Mentionne QUI dit quoi (utilise les prénoms des auteurs)
+- Résumé en français, MAX 400 caractères
+- Si des messages sont en tchèque ou autre langue étrangère, ajoute à la fin sur une nouvelle ligne le texte original le plus pertinent entre guillemets (max 1-2 phrases clés)
+- Format : résumé en français\\n"texte original si langue étrangère"
+- Sois concis, factuel, pas de mots coupés
+- Ne commence pas par "Le groupe..." ou "Les membres..."
 
 Messages :
 ${conversation}`;
@@ -19,7 +27,7 @@ ${conversation}`;
     'https://api.anthropic.com/v1/messages',
     {
       model: MODEL,
-      max_tokens: 256,
+      max_tokens: 400,
       messages: [{ role: 'user', content: prompt }],
     },
     {
@@ -31,9 +39,13 @@ ${conversation}`;
     }
   );
 
-  const text = response.data.content[0].text.trim();
-  // Enforce 300 char hard limit
-  return text.length > 300 ? text.slice(0, 297) + '...' : text;
+  let text = response.data.content[0].text.trim();
+
+  // Wrap quoted foreign text in italics for Telegram HTML
+  text = text.replace(/\n"(.+)"$/s, '\n<i>"$1"</i>');
+
+  // Hard limit
+  return text.length > 500 ? text.slice(0, 497) + '...' : text;
 }
 
 async function describeImage(base64Data, mimeType) {
