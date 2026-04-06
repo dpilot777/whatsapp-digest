@@ -17,6 +17,7 @@ Règles :
 - Résumé en français, MAX 400 caractères
 - Si des messages sont en tchèque ou autre langue étrangère, ajoute à la fin sur une nouvelle ligne le texte original le plus pertinent entre guillemets (max 1-2 phrases clés)
 - Format : résumé en français\\n"texte original si langue étrangère"
+- Mets les mots-clés et sujets importants entre balises <b>gras</b> (format HTML)
 - Sois concis, factuel, pas de mots coupés
 - Ne commence pas par "Le groupe..." ou "Les membres..."
 
