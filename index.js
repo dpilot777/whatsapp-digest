@@ -35,12 +35,6 @@ function isNoise(body) {
   return false;
 }
 
-// ── Progress bar helper ─────────────────────────────────────
-function progressBar(count, maxCount, width = 15) {
-  const filled = Math.round((count / maxCount) * width) || (count > 0 ? 1 : 0);
-  return '▓'.repeat(filled) + '░'.repeat(width - filled);
-}
-
 // ── Fetch historical messages from WhatsApp ─────────────────
 async function fetchHistoricalMessages(days = 1) {
   const since = Date.now() / 1000 - days * 86400;
@@ -89,7 +83,6 @@ async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = 
     }
   }
 
-  const maxCount = Math.max(...allEntries.map(e => e.count), 1);
   const activeEntries = allEntries.filter(e => e.count > 0);
 
   if (activeEntries.length === 0) {
@@ -131,10 +124,8 @@ async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = 
     output += `\n${catEmoji[category] || '📁'} <b>${category}</b>\n`;
 
     for (const entry of catEntries) {
-      const bar = progressBar(entry.count, maxCount);
       const summary = summaries.get(entry.group.chatId) || '';
-      output += `\n<b>${entry.group.name}</b> (${entry.count})\n`;
-      output += `${bar}\n`;
+      output += `\n<b>${entry.group.name}</b> (${entry.count} msg)\n`;
       if (summary) output += `${summary}\n`;
     }
   }

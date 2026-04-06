@@ -10,7 +10,7 @@ async function summarizeMessages(groupName, messages) {
     .map(m => `${m.author}: ${m.body}`)
     .join('\n');
 
-  const prompt = `Résume cette conversation WhatsApp du groupe "${groupName}" en MAXIMUM 300 caractères (pas de mots coupés). Sois concis, factuel, en français. Ne commence pas par "Le groupe..." ou "Les membres...". Va droit au sujet principal.
+  const prompt = `Résume cette conversation WhatsApp du groupe "${groupName}" en MAXIMUM 300 caractères (pas de mots coupés). Sois concis, factuel. Rédige TOUJOURS en français, même si les messages sont en tchèque, anglais ou autre langue — traduis et résume en français. Ne commence pas par "Le groupe..." ou "Les membres...". Va droit au sujet principal.
 
 Messages :
 ${conversation}`;
