@@ -5,7 +5,7 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let bot;
 
-async function initBot(onResumeCommand) {
+async function initBot({ onResume, onResume7d }) {
   // Stop any stale polling session first
   const tmp = new TelegramBot(TELEGRAM_BOT_TOKEN);
   await tmp.deleteWebHook({ drop_pending_updates: true });
@@ -14,11 +14,24 @@ async function initBot(onResumeCommand) {
     polling: { interval: 2000, autoStart: true, params: { timeout: 10 } },
   });
 
-  bot.onText(/\/resume/, async (msg) => {
+  // /resume7d — must be BEFORE /resume to avoid partial match
+  bot.onText(/\/resume7d/, async (msg) => {
+    if (String(msg.chat.id) !== String(TELEGRAM_CHAT_ID)) return;
+    await sendMessage('⏳ Récupération des 7 derniers jours en cours...');
+    try {
+      await onResume7d();
+    } catch (err) {
+      console.error('Error generating 7d digest:', err);
+      await sendMessage('❌ Erreur lors de la génération du résumé 7j.');
+    }
+  });
+
+  // /resume — today's buffer
+  bot.onText(/\/resume$/, async (msg) => {
     if (String(msg.chat.id) !== String(TELEGRAM_CHAT_ID)) return;
     await sendMessage('⏳ Génération du résumé en cours...');
     try {
-      await onResumeCommand();
+      await onResume();
     } catch (err) {
       console.error('Error generating on-demand digest:', err);
       await sendMessage('❌ Erreur lors de la génération du résumé.');
@@ -30,7 +43,7 @@ async function initBot(onResumeCommand) {
     console.error('Telegram polling error:', err.message);
   });
 
-  console.log('Telegram bot started, listening for /resume command');
+  console.log('Telegram bot started, listening for /resume and /resume7d commands');
   return bot;
 }
 

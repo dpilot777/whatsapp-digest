@@ -41,15 +41,50 @@ function progressBar(count, maxCount, width = 15) {
   return '▓'.repeat(filled) + '░'.repeat(width - filled);
 }
 
+// ── Fetch historical messages from WhatsApp ─────────────────
+async function fetchHistoricalMessages(days = 1) {
+  const since = Date.now() / 1000 - days * 86400;
+  const historyBuffer = {};
+
+  for (const g of groups) {
+    try {
+      const chat = await client.getChatById(g.chatId);
+      // Fetch enough messages to cover the period (limit to avoid overload)
+      const limit = days <= 1 ? 200 : Math.min(days * 100, 500);
+      const msgs = await chat.fetchMessages({ limit });
+
+      const filtered = msgs.filter(m => {
+        if (!m.body || m.fromMe) return false;
+        if (m.timestamp < since) return false;
+        if (isNoise(m.body)) return false;
+        return true;
+      });
+
+      if (filtered.length > 0) {
+        historyBuffer[g.chatId] = filtered.map(m => ({
+          author: m._data.notifyName || m.author || 'Unknown',
+          body: m.body,
+          timestamp: m.timestamp,
+        }));
+      }
+    } catch (err) {
+      console.error(`Error fetching history for ${g.name}:`, err.message);
+    }
+  }
+
+  return historyBuffer;
+}
+
 // ── Build & send digest ─────────────────────────────────────
-async function buildAndSendDigest() {
+async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = {}) {
+  const buffer = sourceBuffer || messageBuffer;
   const categorized = getGroupsByCategory(groups);
   const allEntries = [];
 
   // Collect counts
   for (const { category, groups: catGroups } of categorized) {
     for (const g of catGroups) {
-      const msgs = messageBuffer[g.chatId] || [];
+      const msgs = buffer[g.chatId] || [];
       allEntries.push({ group: g, category, messages: msgs, count: msgs.length });
     }
   }
@@ -58,8 +93,8 @@ async function buildAndSendDigest() {
   const activeEntries = allEntries.filter(e => e.count > 0);
 
   if (activeEntries.length === 0) {
-    await sendMessage('📭 Aucun message dans les groupes surveillés aujourd\'hui.');
-    clearBuffer();
+    await sendMessage('📭 Aucun message dans les groupes surveillés pour cette période.');
+    if (clearAfter) clearBuffer();
     return;
   }
 
@@ -81,7 +116,8 @@ async function buildAndSendDigest() {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
-  let output = `📋 <b>Digest WhatsApp — ${dateStr}</b>\n`;
+  const heading = title || `Digest WhatsApp — ${dateStr}`;
+  let output = `📋 <b>${heading}</b>\n`;
   output += `${activeEntries.reduce((s, e) => s + e.count, 0)} messages dans ${activeEntries.length} groupes\n`;
 
   for (const { category, groups: catGroups } of categorized) {
@@ -104,7 +140,7 @@ async function buildAndSendDigest() {
   }
 
   await sendMessage(output);
-  clearBuffer();
+  if (clearAfter) clearBuffer();
   console.log(`Digest sent at ${now.toISOString()}`);
 }
 
@@ -144,12 +180,19 @@ client.on('message', (msg) => {
 // ── Cron: every day at 19:00 ────────────────────────────────
 cron.schedule('0 19 * * *', () => {
   console.log('Cron triggered: building daily digest...');
-  buildAndSendDigest().catch(err => console.error('Digest cron error:', err));
+  buildAndSendDigest(null, { clearAfter: true }).catch(err => console.error('Digest cron error:', err));
 });
 
-// ── Telegram /resume command ────────────────────────────────
-initBot(async () => {
-  await buildAndSendDigest();
+// ── Telegram commands ───────────────────────────────────────
+initBot({
+  onResume: async () => {
+    await buildAndSendDigest(null, { clearAfter: false });
+  },
+  onResume7d: async () => {
+    console.log('Fetching 7-day history...');
+    const history = await fetchHistoricalMessages(7);
+    await buildAndSendDigest(history, { title: 'Digest WhatsApp — 7 derniers jours' });
+  },
 });
 
 // ── Start ───────────────────────────────────────────────────
