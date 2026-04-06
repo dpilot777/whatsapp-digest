@@ -131,7 +131,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
 
     for (const entry of catEntries) {
       const summary = summaries.get(entry.group.chatId) || '';
-      output += `\n<b>${entry.group.name}</b> (${entry.count} msg)\n`;
+      output += `<b>${entry.group.name}</b> (${entry.count} msg)\n`;
       if (summary) output += `${summary}\n`;
     }
   }
