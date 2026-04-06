@@ -4,7 +4,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const { parseConfig, getGroupsByCategory, getChatIdSet } = require('./config');
-const { summarizeMessages } = require('./summarize');
+const { summarizeMessages, describeImage } = require('./summarize');
 const { initBot, sendMessage } = require('./telegram');
 
 // ── Config ──────────────────────────────────────────────────
@@ -12,14 +12,6 @@ const groups = parseConfig();
 const chatIdSet = getChatIdSet(groups);
 const groupMap = {};
 for (const g of groups) groupMap[g.chatId] = g;
-
-// ── Message buffer (cleared after each digest) ─────────────
-// { chatId: [ { author, body, timestamp } ] }
-let messageBuffer = {};
-
-function clearBuffer() {
-  messageBuffer = {};
-}
 
 // Noise filter: ignore emoji-only, "Ok", thumbs up, laughing
 const NOISE_RE = /^[\s\p{Emoji_Presentation}\p{Emoji}\uFE0F\u200D]*$/u;
@@ -43,23 +35,39 @@ async function fetchHistoricalMessages(days = 1) {
   for (const g of groups) {
     try {
       const chat = await client.getChatById(g.chatId);
-      // Fetch enough messages to cover the period (limit to avoid overload)
       const limit = days <= 1 ? 200 : Math.min(days * 100, 500);
       const msgs = await chat.fetchMessages({ limit });
 
-      const filtered = msgs.filter(m => {
-        if (!m.body || m.fromMe) return false;
-        if (m.timestamp < since) return false;
-        if (isNoise(m.body)) return false;
-        return true;
-      });
+      const entries = [];
+      for (const m of msgs) {
+        if (m.fromMe) continue;
+        if (m.timestamp < since) continue;
 
-      if (filtered.length > 0) {
-        historyBuffer[g.chatId] = filtered.map(m => ({
-          author: m._data.notifyName || m.author || 'Unknown',
-          body: m.body,
-          timestamp: m.timestamp,
-        }));
+        const author = m._data.notifyName || m.author || 'Unknown';
+
+        // Handle image messages
+        if (m.hasMedia && (m.type === 'image' || m.type === 'sticker')) {
+          try {
+            const media = await m.downloadMedia();
+            if (media && media.data) {
+              const desc = await describeImage(media.data, media.mimetype);
+              const caption = m.body ? ` — ${m.body}` : '';
+              entries.push({ author, body: `[Image : ${desc}${caption}]`, timestamp: m.timestamp });
+            }
+          } catch (imgErr) {
+            entries.push({ author, body: '[Image non téléchargeable]', timestamp: m.timestamp });
+          }
+          continue;
+        }
+
+        // Text messages
+        if (!m.body) continue;
+        if (isNoise(m.body)) continue;
+        entries.push({ author, body: m.body, timestamp: m.timestamp });
+      }
+
+      if (entries.length > 0) {
+        historyBuffer[g.chatId] = entries;
       }
     } catch (err) {
       console.error(`Error fetching history for ${g.name}:`, err.message);
@@ -70,8 +78,7 @@ async function fetchHistoricalMessages(days = 1) {
 }
 
 // ── Build & send digest ─────────────────────────────────────
-async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = {}) {
-  const buffer = sourceBuffer || messageBuffer;
+async function buildAndSendDigest(buffer, { title } = {}) {
   const categorized = getGroupsByCategory(groups);
   const allEntries = [];
 
@@ -87,7 +94,6 @@ async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = 
 
   if (activeEntries.length === 0) {
     await sendMessage('📭 Aucun message dans les groupes surveillés pour cette période.');
-    if (clearAfter) clearBuffer();
     return;
   }
 
@@ -131,7 +137,6 @@ async function buildAndSendDigest(sourceBuffer, { title, clearAfter = false } = 
   }
 
   await sendMessage(output);
-  if (clearAfter) clearBuffer();
   console.log(`Digest sent at ${now.toISOString()}`);
 }
 
@@ -155,29 +160,23 @@ client.on('ready', () => {
   console.log(`Monitoring ${groups.length} groups across ${getGroupsByCategory(groups).length} categories`);
 });
 
-client.on('message', (msg) => {
-  const chatId = msg.from;
-  if (!chatIdSet.has(chatId)) return;
-  if (isNoise(msg.body)) return;
-
-  if (!messageBuffer[chatId]) messageBuffer[chatId] = [];
-  messageBuffer[chatId].push({
-    author: msg._data.notifyName || msg.author || 'Unknown',
-    body: msg.body,
-    timestamp: msg.timestamp,
-  });
-});
-
 // ── Cron: every day at 19:00 ────────────────────────────────
-cron.schedule('0 19 * * *', () => {
-  console.log('Cron triggered: building daily digest...');
-  buildAndSendDigest(null, { clearAfter: true }).catch(err => console.error('Digest cron error:', err));
+cron.schedule('0 19 * * *', async () => {
+  console.log('Cron triggered: fetching daily history...');
+  try {
+    const history = await fetchHistoricalMessages(1);
+    await buildAndSendDigest(history);
+  } catch (err) {
+    console.error('Digest cron error:', err);
+  }
 });
 
 // ── Telegram commands ───────────────────────────────────────
 initBot({
   onResume: async () => {
-    await buildAndSendDigest(null, { clearAfter: false });
+    console.log('Fetching today\'s history...');
+    const history = await fetchHistoricalMessages(1);
+    await buildAndSendDigest(history);
   },
   onResume7d: async () => {
     console.log('Fetching 7-day history...');

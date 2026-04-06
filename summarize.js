@@ -36,4 +36,42 @@ ${conversation}`;
   return text.length > 300 ? text.slice(0, 297) + '...' : text;
 }
 
-module.exports = { summarizeMessages };
+async function describeImage(base64Data, mimeType) {
+  try {
+    const response = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: MODEL,
+        max_tokens: 150,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mimeType || 'image/jpeg', data: base64Data },
+            },
+            {
+              type: 'text',
+              text: 'Décris cette image en UNE phrase courte en français (max 80 caractères). Sois factuel et concis.',
+            },
+          ],
+        }],
+      },
+      {
+        headers: {
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+      }
+    );
+
+    const text = response.data.content[0].text.trim();
+    return text.length > 100 ? text.slice(0, 97) + '...' : text;
+  } catch (err) {
+    console.error('Error describing image:', err.message);
+    return 'image partagée';
+  }
+}
+
+module.exports = { summarizeMessages, describeImage };
