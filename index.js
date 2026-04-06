@@ -115,9 +115,13 @@ async function buildAndSendDigest(buffer, { title } = {}) {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
+  const totalMsg = activeEntries.reduce((s, e) => s + e.count, 0);
   const heading = title || `Digest WhatsApp — ${dateStr}`;
+  const catEmoji = { 'Air France': '✈️', 'Famille': '👨‍👩‍👧‍👦', 'Provinciaux': '🏔️', 'Amis': '🤝', 'École': '🎒', 'Patinage': '⛸️' };
+
   let output = `📋 <b>${heading}</b>\n`;
-  output += `${activeEntries.reduce((s, e) => s + e.count, 0)} messages dans ${activeEntries.length} groupes\n`;
+  output += `📊 ${totalMsg} messages · ${activeEntries.length} groupes actifs\n`;
+  output += `━━━━━━━━━━━━━━━━━━━━━`;
 
   for (const { category, groups: catGroups } of categorized) {
     const catEntries = activeEntries
@@ -126,15 +130,24 @@ async function buildAndSendDigest(buffer, { title } = {}) {
 
     if (catEntries.length === 0) continue;
 
-    const catEmoji = { 'Air France': '✈️', 'Famille': '👨‍👩‍👧‍👦', 'Provinciaux': '🏔️', 'Amis': '🤝', 'École': '🎒', 'Patinage': '⛸️' };
-    output += `\n${catEmoji[category] || '📁'} <b>${category}</b>\n`;
+    const catMsgTotal = catEntries.reduce((s, e) => s + e.count, 0);
+    output += `\n\n${catEmoji[category] || '📁'} <b>${category}</b> · ${catMsgTotal} msg\n`;
 
     for (const entry of catEntries) {
       const summary = summaries.get(entry.group.chatId) || '';
-      output += `<b>${entry.group.name}</b> (${entry.count} msg)\n`;
-      if (summary) output += `${summary}\n`;
+      output += `\n   ◆ <b>${entry.group.name}</b> (${entry.count})\n`;
+      if (summary) {
+        const lines = summary.split('\n');
+        for (const line of lines) {
+          output += `      ${line}\n`;
+        }
+      }
     }
+    output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
   }
+
+  // Remove trailing separator
+  output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━━━');
 
   await sendMessage(output);
   console.log(`Digest sent at ${now.toISOString()}`);
