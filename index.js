@@ -182,7 +182,7 @@ cron.schedule('0 19 * * *', async () => {
   } catch (err) {
     console.error('Digest cron error:', err);
   }
-});
+}, { timezone: 'Europe/Paris' });
 
 // ── Telegram commands ───────────────────────────────────────
 initBot({

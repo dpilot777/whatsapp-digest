@@ -42,11 +42,21 @@ ${conversation}`;
 
   let text = response.data.content[0].text.trim();
 
-  // Wrap quoted foreign text in italics for Telegram HTML
-  text = text.replace(/\n"(.+)"$/s, '\n<i>"$1"</i>');
+  // Hard limit BEFORE wrapping in tags to avoid breaking HTML
+  if (text.length > 500) text = text.slice(0, 497) + '...';
 
-  // Hard limit
-  return text.length > 500 ? text.slice(0, 497) + '...' : text;
+  // Wrap quoted foreign text in italics for Telegram HTML
+  text = text.replace(/\n"([^"]+?)"\s*\.?\.?\.?$/s, (m, inner) => `\n<i>"${inner}"</i>`);
+
+  // Safety: ensure no orphan opening tags
+  const openI = (text.match(/<i>/g) || []).length;
+  const closeI = (text.match(/<\/i>/g) || []).length;
+  if (openI > closeI) text += '</i>'.repeat(openI - closeI);
+  const openB = (text.match(/<b>/g) || []).length;
+  const closeB = (text.match(/<\/b>/g) || []).length;
+  if (openB > closeB) text += '</b>'.repeat(openB - closeB);
+
+  return text;
 }
 
 async function describeImage(base64Data, mimeType) {

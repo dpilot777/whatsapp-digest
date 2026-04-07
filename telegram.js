@@ -55,7 +55,13 @@ async function sendMessage(text) {
     chunks.push(text.slice(i, i + 4096));
   }
   for (const chunk of chunks) {
-    await bot.sendMessage(TELEGRAM_CHAT_ID, chunk, { parse_mode: 'HTML' });
+    try {
+      await bot.sendMessage(TELEGRAM_CHAT_ID, chunk, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('HTML send failed, retrying as plain text:', err.message);
+      const plain = chunk.replace(/<\/?[^>]+>/g, '');
+      await bot.sendMessage(TELEGRAM_CHAT_ID, plain);
+    }
   }
 }
 
