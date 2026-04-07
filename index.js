@@ -149,7 +149,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   // Remove trailing separator
   output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━━━');
 
-  await sendMessage(output);
+  await sendMessage(output, { withButtons: true });
   console.log(`Digest sent at ${now.toISOString()}`);
 }
 
