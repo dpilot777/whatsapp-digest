@@ -121,7 +121,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
 
   let output = `📋 <b>${heading}</b>\n`;
   output += `📊 ${totalMsg} messages · ${activeEntries.length} groupes actifs\n`;
-  output += `━━━━━━━━━━━━━━━━━━━━━`;
+  output += `━━━━━━━━━━━━━━━━━━━`;
 
   for (const { category, groups: catGroups } of categorized) {
     const catEntries = activeEntries
@@ -143,11 +143,11 @@ async function buildAndSendDigest(buffer, { title } = {}) {
         }
       }
     }
-    output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
+    output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
   }
 
   // Remove trailing separator
-  output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━━━');
+  output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━');
 
   await sendMessage(output, { withButtons: true });
   console.log(`Digest sent at ${now.toISOString()}`);
