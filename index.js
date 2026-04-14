@@ -34,9 +34,11 @@ async function fetchHistoricalMessages(days = 1) {
 
   for (const g of groups) {
     try {
-      const chat = await client.getChatById(g.chatId);
+      // Timeout to prevent hanging on unresponsive chats
+      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+      const chat = await Promise.race([client.getChatById(g.chatId), timeout(15000)]);
       const limit = days <= 1 ? 200 : Math.min(days * 100, 500);
-      const msgs = await chat.fetchMessages({ limit });
+      const msgs = await Promise.race([chat.fetchMessages({ limit }), timeout(15000)]);
 
       const entries = [];
       for (const m of msgs) {
