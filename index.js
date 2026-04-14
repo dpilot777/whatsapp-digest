@@ -143,11 +143,11 @@ async function buildAndSendDigest(buffer, { title } = {}) {
         }
       }
     }
-    output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
+    output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
   }
 
   // Remove trailing separator
-  output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━');
+  output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━');
 
   await sendMessage(output, { withButtons: true });
   console.log(`Digest sent at ${now.toISOString()}`);
