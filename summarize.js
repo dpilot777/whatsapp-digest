@@ -45,6 +45,12 @@ ${conversation}`;
 
   let text = response.data.content[0].text.trim();
 
+  // Strip any thinking tags or reasoning preamble from Claude
+  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, '').trim();
+  text = text.replace(/^(Let me|Here is|I'll|The messages?)[\s\S]*?\n\n/i, '').trim();
+  // Strip any non-Telegram HTML tags (keep only b, i, u, s, a, code, pre)
+  text = text.replace(/<\/?(?!b>|\/b>|i>|\/i>|u>|\/u>)[a-z][^>]*>/gi, '');
+
   // Hard limit BEFORE wrapping in tags to avoid breaking HTML
   if (text.length > 500) text = text.slice(0, 497) + '...';
 
