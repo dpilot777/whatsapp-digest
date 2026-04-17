@@ -13,6 +13,10 @@ const chatIdSet = getChatIdSet(groups);
 const groupMap = {};
 for (const g of groups) groupMap[g.chatId] = g;
 
+// ── Live message buffer (captures messages in real-time) ────
+// { chatId: [ { author, body, timestamp } ] }
+let messageBuffer = {};
+
 // Noise filter: ignore emoji-only, "Ok", thumbs up, laughing
 const NOISE_RE = /^[\s\p{Emoji_Presentation}\p{Emoji}\uFE0F\u200D]*$/u;
 const NOISE_WORDS = new Set(['ok', 'ok!', 'ok.', 'oui', 'd\'accord']);
@@ -32,7 +36,7 @@ async function fetchHistoricalMessages(days = 1) {
   const since = Date.now() / 1000 - days * 86400;
   const historyBuffer = {};
 
-  // Load all chats once and index by ID (avoids getChatById crash)
+  // Load all chats once and index by ID
   let allChats;
   try {
     allChats = await client.getChats();
@@ -47,7 +51,7 @@ async function fetchHistoricalMessages(days = 1) {
     try {
       const chat = chatIndex[g.chatId];
       if (!chat) {
-        console.log(`Chat not found: ${g.name} (${g.chatId})`);
+        console.log(`Chat not found: ${g.name}`);
         continue;
       }
       const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
@@ -64,14 +68,14 @@ async function fetchHistoricalMessages(days = 1) {
         // Handle image messages
         if (m.hasMedia && (m.type === 'image' || m.type === 'sticker')) {
           try {
-            const media = await m.downloadMedia();
+            const media = await Promise.race([m.downloadMedia(), timeout(10000)]);
             if (media && media.data) {
               const desc = await describeImage(media.data, media.mimetype);
               const caption = m.body ? ` — ${m.body}` : '';
               entries.push({ author, body: `[Image : ${desc}${caption}]`, timestamp: m.timestamp });
             }
           } catch (imgErr) {
-            entries.push({ author, body: '[Image non téléchargeable]', timestamp: m.timestamp });
+            entries.push({ author, body: '[Image]', timestamp: m.timestamp });
           }
           continue;
         }
@@ -84,13 +88,36 @@ async function fetchHistoricalMessages(days = 1) {
 
       if (entries.length > 0) {
         historyBuffer[g.chatId] = entries;
+        console.log(`  ✓ ${g.name}: ${entries.length} messages`);
       }
     } catch (err) {
-      console.error(`Error fetching history for ${g.name}:`, err.message);
+      console.error(`  ✗ ${g.name}: ${err.message}`);
     }
   }
 
   return historyBuffer;
+}
+
+// ── Merge buffers (live + history, deduplicated) ────────────
+function mergeBuffers(a, b) {
+  const merged = {};
+  const allIds = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const chatId of allIds) {
+    const msgsA = a[chatId] || [];
+    const msgsB = b[chatId] || [];
+    // Deduplicate by timestamp+author
+    const seen = new Set();
+    const all = [];
+    for (const m of [...msgsA, ...msgsB]) {
+      const key = `${m.timestamp}|${m.author}|${m.body?.slice(0, 30)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(m);
+      }
+    }
+    if (all.length > 0) merged[chatId] = all;
+  }
+  return merged;
 }
 
 // ── Build & send digest ─────────────────────────────────────
@@ -98,7 +125,6 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   const categorized = getGroupsByCategory(groups);
   const allEntries = [];
 
-  // Collect counts
   for (const { category, groups: catGroups } of categorized) {
     for (const g of catGroups) {
       const msgs = buffer[g.chatId] || [];
@@ -113,7 +139,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
     return;
   }
 
-  // Summarize each active group (sequential to respect rate limits)
+  // Summarize each active group
   const summaries = new Map();
   for (const entry of activeEntries) {
     try {
@@ -125,7 +151,6 @@ async function buildAndSendDigest(buffer, { title } = {}) {
     }
   }
 
-  // Build output grouped by category, sorted by count within each category
   const now = new Date();
   const dateStr = now.toLocaleDateString('fr-FR', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -162,7 +187,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
     output += `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄`;
   }
 
-  // Remove trailing separator
+  // Replace trailing separator
   output = output.replace(/┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄$/, '━━━━━━━━━━━━━━━━━━━');
 
   await sendMessage(output, { withButtons: true });
@@ -189,12 +214,48 @@ client.on('ready', () => {
   console.log(`Monitoring ${groups.length} groups across ${getGroupsByCategory(groups).length} categories`);
 });
 
-// ── Cron: every day at 19:00 ────────────────────────────────
+// ── Live message listener ───────────────────────────────────
+client.on('message', async (msg) => {
+  const chatId = msg.from;
+  if (!chatIdSet.has(chatId)) return;
+
+  const author = msg._data.notifyName || msg.author || 'Unknown';
+
+  // Handle images in real-time
+  if (msg.hasMedia && (msg.type === 'image' || msg.type === 'sticker')) {
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        const desc = await describeImage(media.data, media.mimetype);
+        const caption = msg.body ? ` — ${msg.body}` : '';
+        if (!messageBuffer[chatId]) messageBuffer[chatId] = [];
+        messageBuffer[chatId].push({ author, body: `[Image : ${desc}${caption}]`, timestamp: msg.timestamp });
+      }
+    } catch (e) {
+      if (!messageBuffer[chatId]) messageBuffer[chatId] = [];
+      messageBuffer[chatId].push({ author, body: '[Image]', timestamp: msg.timestamp });
+    }
+    return;
+  }
+
+  if (isNoise(msg.body)) return;
+
+  if (!messageBuffer[chatId]) messageBuffer[chatId] = [];
+  messageBuffer[chatId].push({
+    author,
+    body: msg.body,
+    timestamp: msg.timestamp,
+  });
+});
+
+// ── Cron: every day at 19:00 Paris ──────────────────────────
 cron.schedule('0 19 * * *', async () => {
   console.log('Cron triggered: fetching daily history...');
   try {
     const history = await fetchHistoricalMessages(1);
-    await buildAndSendDigest(history);
+    const merged = mergeBuffers(messageBuffer, history);
+    await buildAndSendDigest(merged);
+    messageBuffer = {}; // Clear live buffer after daily digest
   } catch (err) {
     console.error('Digest cron error:', err);
   }
@@ -205,7 +266,8 @@ initBot({
   onResume: async () => {
     console.log('Fetching today\'s history...');
     const history = await fetchHistoricalMessages(1);
-    await buildAndSendDigest(history);
+    const merged = mergeBuffers(messageBuffer, history);
+    await buildAndSendDigest(merged);
   },
   onResume7d: async () => {
     console.log('Fetching 7-day history...');
