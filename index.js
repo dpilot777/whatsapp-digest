@@ -31,59 +31,56 @@ function isNoise(body) {
   return false;
 }
 
-// ── Fetch historical messages from WhatsApp ─────────────────
+// ── Fetch historical messages via Puppeteer (bypasses broken fetchMessages) ──
 async function fetchHistoricalMessages(days = 1) {
-  const since = Date.now() / 1000 - days * 86400;
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
   const historyBuffer = {};
-
-  // Load all chats once and index by ID
-  let allChats;
-  try {
-    allChats = await client.getChats();
-  } catch (err) {
-    console.error('Failed to load chats:', err.message);
-    return historyBuffer;
-  }
-  const chatIndex = {};
-  for (const c of allChats) chatIndex[c.id._serialized] = c;
 
   for (const g of groups) {
     try {
-      const chat = chatIndex[g.chatId];
-      if (!chat) {
-        console.log(`Chat not found: ${g.name}`);
-        continue;
-      }
-      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
       const limit = days <= 1 ? 200 : Math.min(days * 100, 500);
-      const msgs = await Promise.race([chat.fetchMessages({ limit }), timeout(30000)]);
 
-      const entries = [];
-      for (const m of msgs) {
-        if (m.fromMe) continue;
-        if (m.timestamp < since) continue;
+      // Use raw Puppeteer evaluate to bypass broken fetchMessages
+      const rawMsgs = await client.pupPage.evaluate(async (chatId, msgLimit) => {
+        const chat = await window.WPP?.chat?.get(chatId)
+          || window.Store?.Chat?.get(chatId);
+        if (!chat) return null;
 
-        const author = m._data.notifyName || m.author || 'Unknown';
-
-        // Handle image messages
-        if (m.hasMedia && (m.type === 'image' || m.type === 'sticker')) {
-          try {
-            const media = await Promise.race([m.downloadMedia(), timeout(10000)]);
-            if (media && media.data) {
-              const desc = await describeImage(media.data, media.mimetype);
-              const caption = m.body ? ` — ${m.body}` : '';
-              entries.push({ author, body: `[Image : ${desc}${caption}]`, timestamp: m.timestamp });
-            }
-          } catch (imgErr) {
-            entries.push({ author, body: '[Image]', timestamp: m.timestamp });
-          }
-          continue;
+        let msgs;
+        // Try WPP first (newer versions)
+        if (window.WPP?.chat?.getMessages) {
+          msgs = await window.WPP.chat.getMessages(chatId, { count: msgLimit });
+        } else if (chat.msgs && chat.msgs._models) {
+          msgs = chat.msgs._models.slice(-msgLimit);
+        } else {
+          return null;
         }
 
-        // Text messages
-        if (!m.body) continue;
-        if (isNoise(m.body)) continue;
-        entries.push({ author, body: m.body, timestamp: m.timestamp });
+        return msgs.map(m => ({
+          body: m.body || m.caption || '',
+          author: m.notifyName || m.author || m.from || '',
+          timestamp: m.t || 0,
+          fromMe: m.id?.fromMe || false,
+          type: m.type || 'chat',
+          hasMedia: !!(m.mediaData || m.isMedia),
+        }));
+      }, g.chatId, limit);
+
+      if (!rawMsgs) {
+        console.log(`  - ${g.name}: chat introuvable`);
+        continue;
+      }
+
+      const entries = [];
+      for (const m of rawMsgs) {
+        if (m.fromMe) continue;
+        if (m.timestamp < since) continue;
+        if (m.hasMedia && !m.body) {
+          entries.push({ author: m.author, body: '[Image]', timestamp: m.timestamp });
+          continue;
+        }
+        if (!m.body || isNoise(m.body)) continue;
+        entries.push({ author: m.author, body: m.body, timestamp: m.timestamp });
       }
 
       if (entries.length > 0) {
