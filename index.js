@@ -32,13 +32,27 @@ async function fetchHistoricalMessages(days = 1) {
   const since = Date.now() / 1000 - days * 86400;
   const historyBuffer = {};
 
+  // Load all chats once and index by ID (avoids getChatById crash)
+  let allChats;
+  try {
+    allChats = await client.getChats();
+  } catch (err) {
+    console.error('Failed to load chats:', err.message);
+    return historyBuffer;
+  }
+  const chatIndex = {};
+  for (const c of allChats) chatIndex[c.id._serialized] = c;
+
   for (const g of groups) {
     try {
-      // Timeout to prevent hanging on unresponsive chats
+      const chat = chatIndex[g.chatId];
+      if (!chat) {
+        console.log(`Chat not found: ${g.name} (${g.chatId})`);
+        continue;
+      }
       const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
-      const chat = await Promise.race([client.getChatById(g.chatId), timeout(15000)]);
       const limit = days <= 1 ? 200 : Math.min(days * 100, 500);
-      const msgs = await Promise.race([chat.fetchMessages({ limit }), timeout(15000)]);
+      const msgs = await Promise.race([chat.fetchMessages({ limit }), timeout(30000)]);
 
       const entries = [];
       for (const m of msgs) {
