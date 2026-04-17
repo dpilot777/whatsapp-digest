@@ -56,14 +56,35 @@ async function fetchHistoricalMessages(days = 1) {
           return null;
         }
 
-        return msgs.map(m => ({
-          body: m.body || m.caption || '',
-          author: m.notifyName || m.author || m.from || '',
-          timestamp: m.t || 0,
-          fromMe: m.id?.fromMe || false,
-          type: m.type || 'chat',
-          hasMedia: !!(m.mediaData || m.isMedia),
-        }));
+        return msgs.map(m => {
+          // Extract author name — try multiple fields
+          let author = '';
+          if (m.notifyName) {
+            author = m.notifyName;
+          } else if (m.senderObj?.pushname) {
+            author = m.senderObj.pushname;
+          } else if (m.senderObj?.notifyName) {
+            author = m.senderObj.notifyName;
+          } else if (m.senderObj?.name) {
+            author = m.senderObj.name;
+          } else if (typeof m.author === 'string') {
+            author = m.author.split('@')[0];
+          } else if (m.author?.user) {
+            author = m.author.user;
+          } else if (typeof m.from === 'string') {
+            author = m.from.split('@')[0];
+          } else if (m.from?.user) {
+            author = m.from.user;
+          }
+          return {
+            body: m.body || m.caption || '',
+            author: author || 'Inconnu',
+            timestamp: m.t || 0,
+            fromMe: m.id?.fromMe || false,
+            type: m.type || 'chat',
+            hasMedia: !!(m.mediaData || m.isMedia),
+          };
+        });
       }, g.chatId, limit);
 
       if (!rawMsgs) {
