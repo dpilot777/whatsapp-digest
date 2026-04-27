@@ -178,14 +178,15 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   const heading = title || `Digest WhatsApp — ${dateStr}`;
   const catEmoji = { 'Air France': '✈️', 'Famille': '👨‍👩‍👧‍👦', 'Provinciaux': '🏔️', 'Amis': '🤝', 'École': '🎒', 'Patinage': '⛸️' };
 
-  // Global progress bar: 19 segments matching separator width, full at 100+ messages
+  // Global progress bar (compact), full at 100+ messages
+  // Total visible width on line 2 must fit ~19 chars (iOS preview)
   const ratio = Math.min(totalMsg / 100, 1);
-  const filled = Math.max(1, Math.round(ratio * 19));
-  const bar = '█'.repeat(filled) + '░'.repeat(19 - filled);
+  const filled = Math.max(1, Math.round(ratio * 12));
+  const bar = '█'.repeat(filled) + '░'.repeat(12 - filled);
 
   let output = `📋 <b>${heading}</b>\n`;
-  output += `${totalMsg} msg · ${activeEntries.length} groupes\n`;
-  output += `${bar}`;
+  output += `${bar} ${totalMsg}/${activeEntries.length}g\n`;
+  output += `━━━━━━━━━━━━━━━━━━━`;
 
   for (const { category, groups: catGroups } of categorized) {
     const catEntries = activeEntries
