@@ -178,8 +178,13 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   const heading = title || `Digest WhatsApp — ${dateStr}`;
   const catEmoji = { 'Air France': '✈️', 'Famille': '👨‍👩‍👧‍👦', 'Provinciaux': '🏔️', 'Amis': '🤝', 'École': '🎒', 'Patinage': '⛸️' };
 
+  // Global progress bar: 15 segments, full at 100+ messages
+  const ratio = Math.min(totalMsg / 100, 1);
+  const filled = Math.max(1, Math.round(ratio * 15));
+  const bar = '█'.repeat(filled) + '░'.repeat(15 - filled);
+
   let output = `📋 <b>${heading}</b>\n`;
-  output += `📊 ${totalMsg} messages · ${activeEntries.length} groupes actifs\n`;
+  output += `📊 ${bar} ${totalMsg} msg · ${activeEntries.length} groupes\n`;
   output += `━━━━━━━━━━━━━━━━━━━`;
 
   for (const { category, groups: catGroups } of categorized) {
@@ -194,11 +199,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
 
     for (const entry of catEntries) {
       const summary = summaries.get(entry.group.chatId) || '';
-      // Mini progress bar: 10 segments, full at 100+ messages
-      const ratio = Math.min(entry.count / 100, 1);
-      const filled = Math.max(1, Math.round(ratio * 10));
-      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
-      output += `\n   ◆ <b>${entry.group.name}</b> ${bar} ${entry.count}\n`;
+      output += `\n   ◆ <b>${entry.group.name}</b> (${entry.count})\n`;
       if (summary) {
         const lines = summary.split('\n');
         for (const line of lines) {
