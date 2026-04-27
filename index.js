@@ -185,7 +185,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   const bar = '█'.repeat(filled) + '░'.repeat(12 - filled);
 
   let output = `📋 <b>${heading}</b>\n`;
-  output += `${bar} ${totalMsg}/${activeEntries.length}g\n`;
+  output += `${bar} ${totalMsg} mess. / ${activeEntries.length} gr.\n`;
   output += `━━━━━━━━━━━━━━━━━━━`;
 
   for (const { category, groups: catGroups } of categorized) {
