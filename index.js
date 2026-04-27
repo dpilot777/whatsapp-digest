@@ -194,7 +194,11 @@ async function buildAndSendDigest(buffer, { title } = {}) {
 
     for (const entry of catEntries) {
       const summary = summaries.get(entry.group.chatId) || '';
-      output += `\n   ◆ <b>${entry.group.name}</b> (${entry.count})\n`;
+      // Mini progress bar: 10 segments, full at 100+ messages
+      const ratio = Math.min(entry.count / 100, 1);
+      const filled = Math.max(1, Math.round(ratio * 10));
+      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      output += `\n   ◆ <b>${entry.group.name}</b> ${bar} ${entry.count}\n`;
       if (summary) {
         const lines = summary.split('\n');
         for (const line of lines) {
