@@ -182,7 +182,7 @@ async function buildAndSendDigest(buffer, { title } = {}) {
   // Total visible width on line 2 must fit ~19 chars (iOS preview)
   const ratio = Math.min(totalMsg / 100, 1);
   const filled = Math.max(1, Math.round(ratio * 12));
-  const bar = '█'.repeat(filled) + '░'.repeat(12 - filled);
+  const bar = '■'.repeat(filled) + '□'.repeat(12 - filled);
 
   let output = `📋 <b>${heading}</b>\n`;
   output += `${bar} ${totalMsg} mess. / ${activeEntries.length} gr.\n`;
