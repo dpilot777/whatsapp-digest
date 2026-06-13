@@ -83,6 +83,7 @@ async function fetchHistoricalMessages(days = 1) {
             fromMe: m.id?.fromMe || false,
             type: m.type || 'chat',
             hasMedia: !!(m.mediaData || m.isMedia),
+            mediaId: m.id?._serialized || '',
           };
         });
       }, g.chatId, limit);
@@ -96,8 +97,25 @@ async function fetchHistoricalMessages(days = 1) {
       for (const m of rawMsgs) {
         if (m.fromMe) continue;
         if (m.timestamp < since) continue;
+
+        // Images & stickers: keep a placeholder + handle so they can be
+        // described later (daily paths only). Caption is preserved either way.
+        if (m.type === 'image' || m.type === 'sticker') {
+          const caption = m.body && !isNoise(m.body) ? m.body : '';
+          entries.push({
+            author: m.author,
+            body: caption ? `[Image — ${caption}]` : '[Image]',
+            caption,
+            timestamp: m.timestamp,
+            mediaId: m.mediaId || '',
+            isImage: true,
+          });
+          continue;
+        }
+
         if (m.hasMedia && !m.body) {
-          entries.push({ author: m.author, body: '[Image]', timestamp: m.timestamp });
+          // Other media (video, audio, document…) without caption
+          entries.push({ author: m.author, body: '[Média]', timestamp: m.timestamp });
           continue;
         }
         if (!m.body || isNoise(m.body)) continue;
@@ -116,6 +134,30 @@ async function fetchHistoricalMessages(days = 1) {
   return historyBuffer;
 }
 
+// ── Image entry helpers ─────────────────────────────────────
+// An image entry can be: live described "[Image : …]", historical placeholder
+// "[Image]" / "[Image — caption]". Detect them so dedup & description work.
+function isImageEntry(m) {
+  return m.isImage === true || (typeof m.body === 'string' && m.body.startsWith('[Image'));
+}
+
+function isDescribedImage(m) {
+  return typeof m.body === 'string' && m.body.startsWith('[Image :');
+}
+
+// When the same image appears in both buffers, keep the described version and
+// preserve the mediaId so an undescribed copy can still be filled in later.
+function mergeImageEntries(x, y) {
+  const base = isDescribedImage(x) ? x : (isDescribedImage(y) ? y : x);
+  const other = base === x ? y : x;
+  return {
+    ...base,
+    mediaId: base.mediaId || other.mediaId || '',
+    caption: base.caption || other.caption || '',
+    isImage: true,
+  };
+}
+
 // ── Merge buffers (live + history, deduplicated) ────────────
 function mergeBuffers(a, b) {
   const merged = {};
@@ -123,19 +165,80 @@ function mergeBuffers(a, b) {
   for (const chatId of allIds) {
     const msgsA = a[chatId] || [];
     const msgsB = b[chatId] || [];
-    // Deduplicate by timestamp+author
-    const seen = new Set();
-    const all = [];
+    // Deduplicate by timestamp+author. Images use a body-agnostic key so a
+    // described copy and a bare "[Image]" copy collapse into one.
+    const byKey = new Map();
     for (const m of [...msgsA, ...msgsB]) {
-      const key = `${m.timestamp}|${m.author}|${m.body?.slice(0, 30)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        all.push(m);
+      const img = isImageEntry(m);
+      const key = img
+        ? `${m.timestamp}|${m.author}|IMG`
+        : `${m.timestamp}|${m.author}|${(m.body || '').slice(0, 30)}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, m);
+      } else if (img) {
+        byKey.set(key, mergeImageEntries(existing, m));
       }
+      // non-image duplicate → keep the first occurrence
     }
+    const all = [...byKey.values()];
     if (all.length > 0) merged[chatId] = all;
   }
   return merged;
+}
+
+// ── Concurrency-limited map (no extra dependency) ───────────
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+// ── Describe images in a buffer, in place (daily paths only) ─
+// Skips already-described images, caps per group to bound vision API
+// cost/latency, and parallelises the downloads/descriptions.
+async function describeImagesInBuffer(buffer, { capPerGroup = 8, concurrency = 4 } = {}) {
+  const toDescribe = [];
+  for (const chatId of Object.keys(buffer)) {
+    let queued = 0;
+    let skipped = 0;
+    const groupName = groupMap[chatId]?.name || chatId;
+    for (const entry of buffer[chatId]) {
+      if (!isImageEntry(entry) || isDescribedImage(entry)) continue;
+      if (!entry.mediaId) continue; // no handle to download the media
+      if (queued >= capPerGroup) { skipped++; continue; }
+      queued++;
+      toDescribe.push(entry);
+    }
+    if (skipped > 0) {
+      console.log(`  … ${groupName}: ${skipped} image(s) au-delà du plafond (${capPerGroup}), laissées en [Image]`);
+    }
+  }
+
+  if (toDescribe.length === 0) return;
+  console.log(`Describing ${toDescribe.length} image(s) from history...`);
+
+  await mapLimit(toDescribe, concurrency, async (entry) => {
+    try {
+      const msg = await client.getMessageById(entry.mediaId);
+      const media = msg && (await msg.downloadMedia());
+      if (media && media.data) {
+        const desc = await describeImage(media.data, media.mimetype);
+        const cap = entry.caption ? ` — ${entry.caption}` : '';
+        entry.body = `[Image : ${desc}${cap}]`;
+      }
+    } catch (err) {
+      console.error(`  ✗ image ${entry.mediaId}: ${err.message}`);
+      // leave the placeholder body as-is
+    }
+  });
 }
 
 // ── Build & send digest ─────────────────────────────────────
@@ -273,11 +376,12 @@ client.on('message', async (msg) => {
 });
 
 // ── Cron: every day at 19:00 Paris ──────────────────────────
-cron.schedule('0 19 * * *', async () => {
+if (require.main === module) cron.schedule('0 19 * * *', async () => {
   console.log('Cron triggered: fetching daily history...');
   try {
     const history = await fetchHistoricalMessages(1);
     const merged = mergeBuffers(messageBuffer, history);
+    await describeImagesInBuffer(merged);
     await buildAndSendDigest(merged);
     messageBuffer = {}; // Clear live buffer after daily digest
   } catch (err) {
@@ -286,20 +390,34 @@ cron.schedule('0 19 * * *', async () => {
 }, { timezone: 'Europe/Paris' });
 
 // ── Telegram commands ───────────────────────────────────────
-initBot({
+if (require.main === module) initBot({
   onResume: async () => {
     console.log('Fetching today\'s history...');
     const history = await fetchHistoricalMessages(1);
     const merged = mergeBuffers(messageBuffer, history);
+    await describeImagesInBuffer(merged);
     await buildAndSendDigest(merged);
   },
   onResume7d: async () => {
     console.log('Fetching 7-day history...');
     const history = await fetchHistoricalMessages(7);
+    // Images are left as [Image] here by design (daily-only description) to
+    // bound vision API cost/latency over a 7-day window.
     await buildAndSendDigest(history, { title: 'Digest WhatsApp — 7 derniers jours' });
   },
 });
 
 // ── Start ───────────────────────────────────────────────────
-client.initialize();
-console.log('WhatsApp Digest starting... scan QR code when prompted.');
+if (require.main === module) {
+  client.initialize();
+  console.log('WhatsApp Digest starting... scan QR code when prompted.');
+}
+
+// Exported for unit tests — require()-ing this file must not start the client.
+module.exports = {
+  mergeBuffers,
+  isImageEntry,
+  isDescribedImage,
+  mergeImageEntries,
+  mapLimit,
+};

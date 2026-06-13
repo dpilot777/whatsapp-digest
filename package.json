@@ -4,7 +4,8 @@
   "description": "WhatsApp group digest sent daily to Telegram via Claude API summaries",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node test/logic.test.js"
   },
   "keywords": ["whatsapp", "telegram", "digest", "claude"],
   "author": "dpilot777",

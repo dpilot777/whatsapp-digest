@@ -3,8 +3,19 @@ const axios = require('axios');
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = 'claude-sonnet-4-6';
 
+// Dynamic summary length: the busier the group, the longer the summary is
+// allowed to be. Tiers ("généreux" profile, validated by user).
+function summaryCharLimit(messageCount) {
+  if (messageCount <= 15) return 300;
+  if (messageCount <= 40) return 500;
+  if (messageCount <= 100) return 700;
+  return 900;
+}
+
 async function summarizeMessages(groupName, messages) {
   if (!messages || messages.length === 0) return null;
+
+  const charLimit = summaryCharLimit(messages.length);
 
   const conversation = messages
     .map(m => `${m.author}: ${m.body}`)
@@ -17,7 +28,8 @@ Résume cette conversation du groupe "${groupName}".
 Règles STRICTES :
 - Réponds DIRECTEMENT avec le résumé, rien d'autre
 - Mentionne QUI dit quoi (utilise les prénoms des auteurs)
-- Résumé en français UNIQUEMENT, MAX 400 caractères
+- Résumé en français UNIQUEMENT, MAX ${charLimit} caractères
+- Les images apparaissent sous la forme [Image : description] — intègre leur contenu naturellement dans le résumé
 - Si des messages sont en tchèque ou autre langue étrangère, ajoute à la fin sur une nouvelle ligne le texte original le plus pertinent entre guillemets (max 1-2 phrases clés)
 - Mets les mots-clés et sujets importants entre balises <b>gras</b> (format HTML)
 - Sois concis, factuel, pas de mots coupés
@@ -31,7 +43,7 @@ ${conversation}`;
     'https://api.anthropic.com/v1/messages',
     {
       model: MODEL,
-      max_tokens: 400,
+      max_tokens: Math.max(400, charLimit),
       messages: [{ role: 'user', content: prompt }],
     },
     {
@@ -51,8 +63,10 @@ ${conversation}`;
   // Strip any non-Telegram HTML tags (keep only b, i, u, s, a, code, pre)
   text = text.replace(/<\/?(?!b>|\/b>|i>|\/i>|u>|\/u>)[a-z][^>]*>/gi, '');
 
-  // Hard limit BEFORE wrapping in tags to avoid breaking HTML
-  if (text.length > 500) text = text.slice(0, 497) + '...';
+  // Hard limit BEFORE wrapping in tags to avoid breaking HTML.
+  // Small tolerance above the target so the model isn't cut mid-word.
+  const hardLimit = charLimit + 60;
+  if (text.length > hardLimit) text = text.slice(0, hardLimit - 3) + '...';
 
   // Wrap quoted foreign text in italics for Telegram HTML
   text = text.replace(/\n"([^"]+?)"\s*\.?\.?\.?$/s, (m, inner) => `\n<i>"${inner}"</i>`);
@@ -106,4 +120,4 @@ async function describeImage(base64Data, mimeType) {
   }
 }
 
-module.exports = { summarizeMessages, describeImage };
+module.exports = { summarizeMessages, describeImage, summaryCharLimit };
