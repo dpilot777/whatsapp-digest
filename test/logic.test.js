@@ -7,6 +7,7 @@ const {
   isDescribedImage,
   mergeImageEntries,
   mapLimit,
+  isPageDeadError,
 } = require('../index');
 
 let passed = 0;
@@ -131,6 +132,21 @@ async function test(name, fn) {
       active--;
     });
     assert.ok(maxActive <= 3, `maxActive=${maxActive}`);
+  });
+
+  console.log('\nisPageDeadError — detects a detached/dead Puppeteer page');
+  await test('matches the real "detached Frame" error (the prod outage)', () => {
+    assert.ok(isPageDeadError(new Error("Attempted to use detached Frame 'D406BED559FC9A218E5347AEA10DDAE7'.")));
+  });
+  await test('matches other dead-page errors', () => {
+    assert.ok(isPageDeadError(new Error('Session closed. Most likely the page has been closed.')));
+    assert.ok(isPageDeadError(new Error('Target closed')));
+    assert.ok(isPageDeadError(new Error('Execution context was destroyed, most likely because of a navigation.')));
+  });
+  await test('does NOT match ordinary errors', () => {
+    assert.ok(!isPageDeadError(new Error('chat introuvable')));
+    assert.ok(!isPageDeadError(new Error('ETELEGRAM: 502 Bad Gateway')));
+    assert.ok(!isPageDeadError(undefined));
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

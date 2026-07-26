@@ -35,6 +35,7 @@ function isNoise(body) {
 async function fetchHistoricalMessages(days = 1) {
   const since = Math.floor(Date.now() / 1000) - days * 86400;
   const historyBuffer = {};
+  let pageDead = 0;
 
   for (const g of groups) {
     try {
@@ -127,8 +128,18 @@ async function fetchHistoricalMessages(days = 1) {
         console.log(`  ✓ ${g.name}: ${entries.length} messages`);
       }
     } catch (err) {
+      if (isPageDeadError(err)) pageDead++;
       console.error(`  ✗ ${g.name}: ${err.message}`);
     }
+  }
+
+  // Detached frame / dead page: every group failed and nothing came back.
+  // Signal the caller so it alerts + heals instead of sending a false
+  // "Aucun message" digest.
+  if (pageDead > 0 && Object.keys(historyBuffer).length === 0) {
+    const e = new Error('WhatsApp page detached during fetch');
+    e.code = 'WA_PAGE_DEAD';
+    throw e;
   }
 
   return historyBuffer;
@@ -331,6 +342,24 @@ const client = new Client({
   },
 });
 
+// ── Health & auto-recovery ──────────────────────────────────
+// WhatsApp Web periodically reloads its own page; the old Puppeteer frame then
+// becomes "detached" and every evaluate() throws. The client keeps a dead page,
+// so the digest silently sees zero messages ("Aucun message") for days. We
+// detect that and exit — pm2 relaunches a clean session (LocalAuth persists).
+let recovering = false;
+function recover(reason) {
+  if (recovering) return;
+  recovering = true;
+  console.error(`Recovering WhatsApp session (pm2 will restart) — ${reason}`);
+  setTimeout(() => process.exit(1), 1000);
+}
+
+function isPageDeadError(err) {
+  const m = (err && err.message) || String(err || '');
+  return /detached Frame|Session closed|Target closed|Execution context was destroyed|Protocol error|page has been closed/i.test(m);
+}
+
 client.on('qr', (qr) => {
   console.log('Scan this QR code with WhatsApp:');
   qrcode.generate(qr, { small: true });
@@ -339,6 +368,23 @@ client.on('qr', (qr) => {
 client.on('ready', () => {
   console.log('WhatsApp client ready!');
   console.log(`Monitoring ${groups.length} groups across ${getGroupsByCategory(groups).length} categories`);
+  // Optional boot sanity check: run one real fetch and log the count (no Telegram).
+  if (process.env.BOOT_SELFTEST === '1') {
+    setTimeout(async () => {
+      try {
+        const h = await fetchHistoricalMessages(1);
+        const total = Object.values(h).reduce((s, a) => s + a.length, 0);
+        console.log(`[SELFTEST] ${Object.keys(h).length} active group(s), ${total} message(s) fetched`);
+      } catch (e) {
+        console.error(`[SELFTEST] ${e.code || e.message}`);
+      }
+    }, 15000);
+  }
+});
+
+client.on('disconnected', (reason) => {
+  console.error(`WhatsApp disconnected: ${reason}`);
+  recover(`disconnected: ${reason}`);
 });
 
 // ── Live message listener ───────────────────────────────────
@@ -385,7 +431,13 @@ if (require.main === module) cron.schedule('0 19 * * *', async () => {
     await buildAndSendDigest(merged);
     messageBuffer = {}; // Clear live buffer after daily digest
   } catch (err) {
-    console.error('Digest cron error:', err);
+    if (err.code === 'WA_PAGE_DEAD') {
+      console.error('Daily digest: WhatsApp page was detached — recovering.');
+      await sendMessage('⚠️ Connexion WhatsApp perdue au moment du digest quotidien. Reconnexion automatique en cours — relancez /resume dans ~1 min.').catch(() => {});
+      recover('daily digest: page dead');
+    } else {
+      console.error('Digest cron error:', err);
+    }
   }
 }, { timezone: 'Europe/Paris' });
 
@@ -393,17 +445,29 @@ if (require.main === module) cron.schedule('0 19 * * *', async () => {
 if (require.main === module) initBot({
   onResume: async () => {
     console.log('Fetching today\'s history...');
-    const history = await fetchHistoricalMessages(1);
-    const merged = mergeBuffers(messageBuffer, history);
-    await describeImagesInBuffer(merged);
-    await buildAndSendDigest(merged);
+    try {
+      const history = await fetchHistoricalMessages(1);
+      const merged = mergeBuffers(messageBuffer, history);
+      await describeImagesInBuffer(merged);
+      await buildAndSendDigest(merged);
+    } catch (err) {
+      if (err.code !== 'WA_PAGE_DEAD') throw err;
+      await sendMessage('⚠️ Connexion WhatsApp perdue — reconnexion automatique en cours. Réessayez /resume dans ~1 min.').catch(() => {});
+      recover('resume: page dead');
+    }
   },
   onResume7d: async () => {
     console.log('Fetching 7-day history...');
-    const history = await fetchHistoricalMessages(7);
-    // Images are left as [Image] here by design (daily-only description) to
-    // bound vision API cost/latency over a 7-day window.
-    await buildAndSendDigest(history, { title: 'Digest WhatsApp — 7 derniers jours' });
+    try {
+      const history = await fetchHistoricalMessages(7);
+      // Images are left as [Image] here by design (daily-only description) to
+      // bound vision API cost/latency over a 7-day window.
+      await buildAndSendDigest(history, { title: 'Digest WhatsApp — 7 derniers jours' });
+    } catch (err) {
+      if (err.code !== 'WA_PAGE_DEAD') throw err;
+      await sendMessage('⚠️ Connexion WhatsApp perdue — reconnexion automatique en cours. Réessayez /resume7d dans ~1 min.').catch(() => {});
+      recover('resume7d: page dead');
+    }
   },
 });
 
@@ -411,6 +475,17 @@ if (require.main === module) initBot({
 if (require.main === module) {
   client.initialize();
   console.log('WhatsApp Digest starting... scan QR code when prompted.');
+
+  // Health watchdog: a detached/dead page is caught within minutes and healed
+  // (pm2 relaunch) instead of silently sending empty digests for days.
+  setInterval(async () => {
+    if (recovering) return;
+    try {
+      if (client.pupPage) await client.pupPage.evaluate('1');
+    } catch (err) {
+      if (isPageDeadError(err)) recover(`watchdog: ${err.message}`);
+    }
+  }, 5 * 60 * 1000);
 }
 
 // Exported for unit tests — require()-ing this file must not start the client.
@@ -420,4 +495,5 @@ module.exports = {
   isDescribedImage,
   mergeImageEntries,
   mapLimit,
+  isPageDeadError,
 };
