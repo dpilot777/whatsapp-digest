@@ -6,8 +6,8 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 let bot;
 let handlers = {};
 
-async function initBot({ onResume, onResume7d }) {
-  handlers = { onResume, onResume7d };
+async function initBot({ onResume, onResume7d, onListGroups }) {
+  handlers = { onResume, onResume7d, onListGroups };
   // Stop any stale polling session first
   const tmp = new TelegramBot(TELEGRAM_BOT_TOKEN);
   await tmp.deleteWebHook({ drop_pending_updates: true });
@@ -37,6 +37,18 @@ async function initBot({ onResume, onResume7d }) {
     } catch (err) {
       console.error('Error generating on-demand digest:', err);
       await sendMessage('❌ Erreur lors de la génération du résumé.');
+    }
+  });
+
+  // /groupes — list every group the account is in (flags new vs monitored)
+  bot.onText(/\/groupes/, async (msg) => {
+    if (String(msg.chat.id) !== String(TELEGRAM_CHAT_ID)) return;
+    await sendMessage('⏳ Récupération de la liste des groupes...');
+    try {
+      await onListGroups();
+    } catch (err) {
+      console.error('Error listing groups:', err);
+      await sendMessage('❌ Erreur lors de la récupération des groupes.');
     }
   });
 
@@ -71,7 +83,7 @@ async function initBot({ onResume, onResume7d }) {
     console.error('Telegram polling error:', err.message);
   });
 
-  console.log('Telegram bot started, listening for /resume and /resume7d commands');
+  console.log('Telegram bot started, listening for /resume, /resume7d and /groupes commands');
   return bot;
 }
 

@@ -469,6 +469,52 @@ if (require.main === module) initBot({
       recover('resume7d: page dead');
     }
   },
+  onListGroups: async () => {
+    console.log('Listing all WhatsApp groups...');
+    let all;
+    try {
+      all = await client.pupPage.evaluate(() => {
+        if (!window.Store || !window.Store.Chat || !window.Store.Chat.getModelsArray) return null;
+        return window.Store.Chat.getModelsArray()
+          .filter((c) => c && c.id && c.id.server === 'g.us')
+          .map((c) => ({
+            id: c.id._serialized,
+            name: c.formattedTitle || c.name || (c.groupMetadata && c.groupMetadata.subject) || '',
+          }));
+      });
+    } catch (err) {
+      if (!isPageDeadError(err)) throw err;
+      await sendMessage('⚠️ Connexion WhatsApp perdue — reconnexion automatique en cours. Réessayez /groupes dans ~1 min.').catch(() => {});
+      recover('groupes: page dead');
+      return;
+    }
+
+    if (!all) {
+      await sendMessage('⚠️ Liste indisponible (WhatsApp pas encore prêt). Réessayez dans ~1 min.');
+      return;
+    }
+
+    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'fr');
+    const presentIds = new Set(all.map((g) => g.id));
+    const fresh = all.filter((g) => !chatIdSet.has(g.id)).sort(byName);
+    const monitored = all.filter((g) => chatIdSet.has(g.id)).sort(byName);
+    const missing = groups.filter((g) => !presentIds.has(g.chatId)); // configured but not found now
+
+    let out = `👥 <b>Groupes WhatsApp</b>\n${fresh.length} nouveau(x) · ${monitored.length} suivi(s) · ${missing.length} introuvable(s)\n`;
+    out += `\n🆕 <b>Nouveaux (non suivis)</b>\n`;
+    out += fresh.length
+      ? fresh.map((g) => `• ${esc(g.name) || '(sans nom)'}\n<code>${g.id}</code>`).join('\n') + '\n'
+      : '(aucun)\n';
+    if (missing.length) {
+      out += `\n⚠️ <b>Configurés mais introuvables</b> (quittés/renommés ?)\n`;
+      out += missing.map((g) => `• ${esc(g.name)}`).join('\n') + '\n';
+    }
+    out += `\n✅ <b>Déjà dans le digest</b>\n`;
+    out += monitored.map((g) => `• ${esc(g.name) || '(sans nom)'}`).join('\n') + '\n';
+
+    await sendMessage(out);
+  },
 });
 
 // ── Start ───────────────────────────────────────────────────
