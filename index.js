@@ -5,7 +5,7 @@ const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const { parseConfig, getGroupsByCategory, getChatIdSet } = require('./config');
 const { summarizeMessages, describeImage } = require('./summarize');
-const { initBot, sendMessage } = require('./telegram');
+const { initBot, sendMessage, sendMediaAlbum, sendDocumentFile } = require('./telegram');
 
 // ── Config ──────────────────────────────────────────────────
 const groups = parseConfig();
@@ -21,6 +21,16 @@ let messageBuffer = {};
 const NOISE_RE = /^[\s\p{Emoji_Presentation}\p{Emoji}\uFE0F\u200D]*$/u;
 const NOISE_WORDS = new Set(['ok', 'ok!', 'ok.', 'oui', 'd\'accord']);
 const NOISE_EMOJIS = new Set(['👍', '👍🏻', '👍🏼', '👍🏽', '👍🏾', '👍🏿', '😂', '🤣', '😅']);
+
+// WhatsApp media type → French label used in the text digest.
+const MEDIA_LABEL = {
+  image: 'Image', sticker: 'Image', video: 'Vidéo', gif: 'Vidéo',
+  document: 'Document', audio: 'Audio', ptt: 'Audio',
+};
+// Media types re-sent to Telegram after the digest (skip stickers/audio).
+const MEDIA_APPEND_TYPES = new Set(['image', 'video', 'gif', 'document']);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function isNoise(body) {
   if (!body || !body.trim()) return true;
@@ -85,6 +95,8 @@ async function fetchHistoricalMessages(days = 1) {
             type: m.type || 'chat',
             hasMedia: !!(m.mediaData || m.isMedia),
             mediaId: m.id?._serialized || '',
+            filename: m.filename || '',
+            size: m.size || 0,
           };
         });
       }, g.chatId, limit);
@@ -99,23 +111,28 @@ async function fetchHistoricalMessages(days = 1) {
         if (m.fromMe) continue;
         if (m.timestamp < since) continue;
 
-        // Images & stickers: keep a placeholder + handle so they can be
-        // described later (daily paths only). Caption is preserved either way.
-        if (m.type === 'image' || m.type === 'sticker') {
+        // Any media: keep a placeholder + handle (mediaId/type/size) so it can
+        // be described (images) and/or re-sent to Telegram after the digest.
+        const label = MEDIA_LABEL[m.type];
+        if (label) {
           const caption = m.body && !isNoise(m.body) ? m.body : '';
+          const isImg = m.type === 'image' || m.type === 'sticker';
           entries.push({
             author: m.author,
-            body: caption ? `[Image — ${caption}]` : '[Image]',
+            body: caption ? `[${label} — ${caption}]` : `[${label}]`,
             caption,
             timestamp: m.timestamp,
             mediaId: m.mediaId || '',
-            isImage: true,
+            isImage: isImg,
+            mediaType: m.type,
+            filename: m.filename || '',
+            size: m.size || 0,
           });
           continue;
         }
 
         if (m.hasMedia && !m.body) {
-          // Other media (video, audio, document…) without caption
+          // Unknown media kind without caption
           entries.push({ author: m.author, body: '[Média]', timestamp: m.timestamp });
           continue;
         }
@@ -250,6 +267,87 @@ async function describeImagesInBuffer(buffer, { capPerGroup = 8, concurrency = 4
       // leave the placeholder body as-is
     }
   });
+}
+
+// ── Send the day's media (images/videos/documents) after the digest ──
+// Grouped by WhatsApp group as Telegram albums, capped per group. Videos or
+// files above Telegram's ~50 MB bot limit are listed, not attached.
+// Uses the historical buffer (has mediaId/type/size for every media of the day).
+async function sendDayMedia(history, { capPerGroup = 20, maxBytes = 49 * 1024 * 1024, concurrency = 4 } = {}) {
+  const categorized = getGroupsByCategory(groups);
+  for (const { groups: catGroups } of categorized) {
+    for (const g of catGroups) {
+      const wanted = (history[g.chatId] || []).filter(
+        (e) => e.mediaId && MEDIA_APPEND_TYPES.has(e.mediaType),
+      );
+      if (wanted.length === 0) continue;
+      const capped = wanted.slice(0, capPerGroup);
+      const overflow = wanted.length - capped.length;
+
+      let downloaded;
+      try {
+        downloaded = await mapLimit(capped, concurrency, async (e) => {
+          if (e.size && e.size > maxBytes) return { e, oversized: true };
+          const msg = await client.getMessageById(e.mediaId);
+          const media = msg && (await msg.downloadMedia());
+          if (!media || !media.data) return { e, failed: true };
+          const buf = Buffer.from(media.data, 'base64');
+          if (buf.length > maxBytes) return { e, oversized: true };
+          return { e, buf, mimetype: media.mimetype, filename: media.filename || e.filename };
+        });
+      } catch (err) {
+        if (isPageDeadError(err)) { recover('media: page dead'); return; }
+        console.error(`sendDayMedia ${g.name}: ${err.message}`);
+        continue;
+      }
+
+      const ok = downloaded.filter((d) => d && d.buf);
+      const oversized = downloaded.filter((d) => d && d.oversized);
+      const failed = downloaded.filter((d) => d && d.failed);
+      if (ok.length === 0 && oversized.length === 0) continue;
+
+      let header = `📎 <b>Médias — ${g.name}</b> · ${ok.length} joint(s)`;
+      const notes = [];
+      if (overflow) notes.push(`+${overflow} au-delà du plafond (${capPerGroup})`);
+      if (oversized.length) notes.push(`${oversized.length} trop volumineux (>50 Mo)`);
+      if (failed.length) notes.push(`${failed.length} indisponible(s)`);
+      if (notes.length) header += `\n<i>${notes.join(' · ')}</i>`;
+      await sendMessage(header).catch(() => {});
+
+      // Photos + videos → albums of up to 10
+      const album = ok
+        .filter((d) => d.e.mediaType !== 'document')
+        .map((d) => ({
+          type: d.e.mediaType === 'image' ? 'photo' : 'video',
+          media: d.buf,
+          fileOptions: {
+            filename: d.filename || (d.e.mediaType === 'image' ? 'photo.jpg' : 'video.mp4'),
+            contentType: d.mimetype || undefined,
+          },
+        }));
+      for (let i = 0; i < album.length; i += 10) {
+        try {
+          await sendMediaAlbum(album.slice(i, i + 10));
+        } catch (err) {
+          console.error(`album send ${g.name}: ${err.message}`);
+        }
+        await sleep(1200); // stay under Telegram's per-chat rate limit
+      }
+
+      // Documents individually
+      for (const d of ok.filter((x) => x.e.mediaType === 'document')) {
+        try {
+          await sendDocumentFile(d.buf, {
+            filename: d.filename || 'document',
+            contentType: d.mimetype || undefined,
+          });
+        } catch (err) {
+          console.error(`doc send ${g.name}: ${err.message}`);
+        }
+        await sleep(1200);
+      }
+    }
+  }
 }
 
 // ── Build & send digest ─────────────────────────────────────
@@ -429,6 +527,7 @@ if (require.main === module) cron.schedule('0 19 * * *', async () => {
     const merged = mergeBuffers(messageBuffer, history);
     await describeImagesInBuffer(merged);
     await buildAndSendDigest(merged);
+    await sendDayMedia(history);
     messageBuffer = {}; // Clear live buffer after daily digest
   } catch (err) {
     if (err.code === 'WA_PAGE_DEAD') {
@@ -450,6 +549,7 @@ if (require.main === module) initBot({
       const merged = mergeBuffers(messageBuffer, history);
       await describeImagesInBuffer(merged);
       await buildAndSendDigest(merged);
+      await sendDayMedia(history);
     } catch (err) {
       if (err.code !== 'WA_PAGE_DEAD') throw err;
       await sendMessage('⚠️ Connexion WhatsApp perdue — reconnexion automatique en cours. Réessayez /resume dans ~1 min.').catch(() => {});

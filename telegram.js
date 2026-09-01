@@ -117,4 +117,23 @@ async function sendMessage(text, { withButtons = false } = {}) {
   }
 }
 
-module.exports = { initBot, sendMessage };
+// ── Media sending (day's images/videos/documents appended to digest) ──
+// items: [{ type:'photo'|'video', media:Buffer, fileOptions:{filename, contentType} }]
+async function sendMediaAlbum(items) {
+  if (!bot) throw new Error('Telegram bot not initialized');
+  if (!items || items.length === 0) return;
+  if (items.length === 1) {
+    const it = items[0];
+    if (it.type === 'video') return bot.sendVideo(TELEGRAM_CHAT_ID, it.media, {}, it.fileOptions);
+    return bot.sendPhoto(TELEGRAM_CHAT_ID, it.media, {}, it.fileOptions);
+  }
+  // sendMediaGroup accepts 2–10 items; Buffers packaged via fileOptions
+  return bot.sendMediaGroup(TELEGRAM_CHAT_ID, items);
+}
+
+async function sendDocumentFile(buffer, fileOptions) {
+  if (!bot) throw new Error('Telegram bot not initialized');
+  return bot.sendDocument(TELEGRAM_CHAT_ID, buffer, {}, fileOptions);
+}
+
+module.exports = { initBot, sendMessage, sendMediaAlbum, sendDocumentFile };
