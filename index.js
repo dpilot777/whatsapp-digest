@@ -481,15 +481,30 @@ client.on('ready', () => {
         const media = all.filter((e) => e.mediaType);
         const withId = media.filter((e) => e.mediaId);
         console.log(`[SELFTEST] ${Object.keys(h).length} groups, ${all.length} msgs, media=${media.length}, withMediaId=${withId.length}`);
-        // Validate the full download chain on the first media entry.
+        // Find the canonical store key for the first media entry, then download.
         if (withId.length) {
           const e0 = withId[0];
+          let canonical = null;
           try {
-            const msg = await client.getMessageById(e0.mediaId);
-            const dl = msg && (await msg.downloadMedia());
-            console.log(`[SELFTEST] download ${e0.mediaType}: ${dl && dl.data ? `OK ${dl.mimetype} ${Buffer.from(dl.data, 'base64').length}b` : 'NO DATA'}`);
-          } catch (err) {
-            console.error(`[SELFTEST] download failed: ${err.message}`);
+            const diag = await client.pupPage.evaluate((sid) => {
+              const parts = sid.split('_');
+              const threePart = parts.slice(0, 3).join('_');
+              const msg = (window.Store && window.Store.Msg && (window.Store.Msg.get(sid) || window.Store.Msg.get(threePart))) || null;
+              return {
+                bySid: !!(window.Store && window.Store.Msg && window.Store.Msg.get(sid)),
+                byThree: !!(window.Store && window.Store.Msg && window.Store.Msg.get(threePart)),
+                canonical: msg && msg.id && msg.id._serialized ? msg.id._serialized : null,
+              };
+            }, e0.mediaId);
+            console.log(`[SELFTEST] idcheck: ${JSON.stringify(diag)}`);
+            canonical = diag.canonical;
+          } catch (err) { console.error(`[SELFTEST] idcheck failed: ${err.message}`); }
+          if (canonical) {
+            try {
+              const msg = await client.getMessageById(canonical);
+              const dl = msg && (await msg.downloadMedia());
+              console.log(`[SELFTEST] download: ${dl && dl.data ? `OK ${dl.mimetype} ${Buffer.from(dl.data, 'base64').length}b` : 'NO DATA'}`);
+            } catch (err) { console.error(`[SELFTEST] download failed: ${err.message}`); }
           }
         }
       } catch (e) {
