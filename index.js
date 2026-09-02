@@ -95,7 +95,12 @@ async function fetchHistoricalMessages(days = 1) {
             fromMe: m.id?.fromMe || false,
             type: m.type || 'chat',
             hasMedia: !!(m.mediaData || m.isMedia),
-            mediaId: m.id?._serialized || '',
+            // WPP's MsgKey has no `_serialized` prop, but String(m.id) yields the
+            // serialized form (e.g. "false_<chat>@g.us_<id>_<participant>").
+            mediaId: (() => {
+              const s = m.id ? String(m.id) : '';
+              return s && s !== '[object Object]' ? s : (m.id && m.id._serialized) || '';
+            })(),
             filename: m.filename || '',
             size: m.size || 0,
           };
@@ -476,38 +481,17 @@ client.on('ready', () => {
         const media = all.filter((e) => e.mediaType);
         const withId = media.filter((e) => e.mediaId);
         console.log(`[SELFTEST] ${Object.keys(h).length} groups, ${all.length} msgs, media=${media.length}, withMediaId=${withId.length}`);
-        if (media.length) console.log(`[SELFTEST] media[0]: ${JSON.stringify({ type: media[0].mediaType, id: media[0].mediaId ? 'set' : 'EMPTY', size: media[0].size, file: media[0].filename })}`);
-
-        // Raw probe: message shape straight from the store (what the fetch sees)
-        const probe = await client.pupPage.evaluate(async (ids) => {
-          const out = { scanned: 0, types: {}, mediaSeen: 0, idHasSerialized: 0, sample: null };
-          for (const cid of ids) {
-            let msgs = [];
-            try {
-              if (window.WPP?.chat?.getMessages) msgs = await window.WPP.chat.getMessages(cid, { count: 80 });
-              else { const c = window.Store?.Chat?.get(cid); msgs = (c && c.msgs && c.msgs._models) ? c.msgs._models.slice(-80) : []; }
-            } catch (e) { continue; }
-            for (const m of msgs) {
-              out.scanned++;
-              const t = m.type || 'chat';
-              out.types[t] = (out.types[t] || 0) + 1;
-              if (['image', 'video', 'document', 'sticker', 'audio', 'ptt', 'gif'].includes(t)) {
-                out.mediaSeen++;
-                if (m.id && m.id._serialized) out.idHasSerialized++;
-                if (!out.sample) out.sample = {
-                  type: t,
-                  idKeys: m.id && typeof m.id === 'object' ? Object.keys(m.id) : String(m.id).slice(0, 30),
-                  idStr: (() => { try { return String(m.id); } catch (e) { return 'ERR'; } })().slice(0, 60),
-                  idToString: (m.id && m.id.toString) ? String(m.id.toString()).slice(0, 60) : null,
-                  rawId: m.id && m.id.id ? String(m.id.id).slice(0, 40) : null,
-                  hasGetMsgById: typeof window.WPP?.chat?.getMessageById,
-                };
-              }
-            }
+        // Validate the full download chain on the first media entry.
+        if (withId.length) {
+          const e0 = withId[0];
+          try {
+            const msg = await client.getMessageById(e0.mediaId);
+            const dl = msg && (await msg.downloadMedia());
+            console.log(`[SELFTEST] download ${e0.mediaType}: ${dl && dl.data ? `OK ${dl.mimetype} ${Buffer.from(dl.data, 'base64').length}b` : 'NO DATA'}`);
+          } catch (err) {
+            console.error(`[SELFTEST] download failed: ${err.message}`);
           }
-          return out;
-        }, groups.map((g) => g.chatId));
-        console.log(`[SELFTEST] probe: ${JSON.stringify(probe)}`);
+        }
       } catch (e) {
         console.error(`[SELFTEST] ${e.code || e.message}`);
       }
