@@ -472,12 +472,39 @@ client.on('ready', () => {
     setTimeout(async () => {
       try {
         const h = await fetchHistoricalMessages(1);
-        const total = Object.values(h).reduce((s, a) => s + a.length, 0);
-        console.log(`[SELFTEST] ${Object.keys(h).length} active group(s), ${total} message(s) fetched`);
+        const all = Object.values(h).flat();
+        const media = all.filter((e) => e.mediaType);
+        const withId = media.filter((e) => e.mediaId);
+        console.log(`[SELFTEST] ${Object.keys(h).length} groups, ${all.length} msgs, media=${media.length}, withMediaId=${withId.length}`);
+        if (media.length) console.log(`[SELFTEST] media[0]: ${JSON.stringify({ type: media[0].mediaType, id: media[0].mediaId ? 'set' : 'EMPTY', size: media[0].size, file: media[0].filename })}`);
+
+        // Raw probe: message shape straight from the store (what the fetch sees)
+        const probe = await client.pupPage.evaluate(async (ids) => {
+          const out = { scanned: 0, types: {}, mediaSeen: 0, idHasSerialized: 0, sample: null };
+          for (const cid of ids) {
+            let msgs = [];
+            try {
+              if (window.WPP?.chat?.getMessages) msgs = await window.WPP.chat.getMessages(cid, { count: 80 });
+              else { const c = window.Store?.Chat?.get(cid); msgs = (c && c.msgs && c.msgs._models) ? c.msgs._models.slice(-80) : []; }
+            } catch (e) { continue; }
+            for (const m of msgs) {
+              out.scanned++;
+              const t = m.type || 'chat';
+              out.types[t] = (out.types[t] || 0) + 1;
+              if (['image', 'video', 'document', 'sticker', 'audio', 'ptt', 'gif'].includes(t)) {
+                out.mediaSeen++;
+                if (m.id && m.id._serialized) out.idHasSerialized++;
+                if (!out.sample) out.sample = { type: t, idType: typeof m.id, hasSer: !!(m.id && m.id._serialized), size: m.size, filename: m.filename || null };
+              }
+            }
+          }
+          return out;
+        }, groups.map((g) => g.chatId));
+        console.log(`[SELFTEST] probe: ${JSON.stringify(probe)}`);
       } catch (e) {
         console.error(`[SELFTEST] ${e.code || e.message}`);
       }
-    }, 15000);
+    }, 20000);
   }
 });
 
