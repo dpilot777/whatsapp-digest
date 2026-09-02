@@ -235,6 +235,39 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
+// ── Download a media message's bytes in the browser context ─
+// Robust to the WPP id format: tries the serialized id and its 3-part form,
+// falls back to getMessagesById, then decrypts directly (mirrors wwebjs).
+// Returns { data(base64), mimetype, filename } or null.
+async function downloadMediaById(serialized) {
+  if (!serialized) return null;
+  return client.pupPage.evaluate(async (sid) => {
+    const parts = sid.split('_');
+    const cands = [sid];
+    if (parts.length > 3) cands.push(parts.slice(0, 3).join('_'));
+    let msg = null;
+    for (const c of cands) { const m = window.Store?.Msg?.get(c); if (m) { msg = m; break; } }
+    if (!msg) {
+      try { const r = await window.Store.Msg.getMessagesById(cands); msg = r && r.messages && r.messages[0]; } catch (e) { /* not found */ }
+    }
+    if (!msg || !msg.mediaData) return null;
+    if (msg.mediaData.mediaStage !== 'RESOLVED') {
+      try { await msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 }); } catch (e) { /* keep going */ }
+    }
+    const stage = msg.mediaData.mediaStage;
+    if (typeof stage === 'string' && (stage.includes('ERROR') || stage === 'FETCHING')) return null;
+    try {
+      const decrypted = await window.Store.DownloadManager.downloadAndMaybeDecrypt({
+        directPath: msg.directPath, encFilehash: msg.encFilehash, filehash: msg.filehash,
+        mediaKey: msg.mediaKey, mediaKeyTimestamp: msg.mediaKeyTimestamp, type: msg.type,
+        signal: (new AbortController()).signal,
+      });
+      const data = await window.WWebJS.arrayBufferToBase64Async(decrypted);
+      return { data, mimetype: msg.mimetype, filename: msg.filename || null };
+    } catch (e) { return null; }
+  }, serialized);
+}
+
 // ── Describe images in a buffer, in place (daily paths only) ─
 // Skips already-described images, caps per group to bound vision API
 // cost/latency, and parallelises the downloads/descriptions.
@@ -261,8 +294,7 @@ async function describeImagesInBuffer(buffer, { capPerGroup = 8, concurrency = 4
 
   await mapLimit(toDescribe, concurrency, async (entry) => {
     try {
-      const msg = await client.getMessageById(entry.mediaId);
-      const media = msg && (await msg.downloadMedia());
+      const media = await downloadMediaById(entry.mediaId);
       if (media && media.data) {
         const desc = await describeImage(media.data, media.mimetype);
         const cap = entry.caption ? ` — ${entry.caption}` : '';
@@ -294,8 +326,7 @@ async function sendDayMedia(history, { capPerGroup = 20, maxBytes = 49 * 1024 * 
       try {
         downloaded = await mapLimit(capped, concurrency, async (e) => {
           if (e.size && e.size > maxBytes) return { e, oversized: true };
-          const msg = await client.getMessageById(e.mediaId);
-          const media = msg && (await msg.downloadMedia());
+          const media = await downloadMediaById(e.mediaId);
           if (!media || !media.data) return { e, failed: true };
           const buf = Buffer.from(media.data, 'base64');
           if (buf.length > maxBytes) return { e, oversized: true };
@@ -452,6 +483,7 @@ const client = new Client({
 // so the digest silently sees zero messages ("Aucun message") for days. We
 // detect that and exit — pm2 relaunches a clean session (LocalAuth persists).
 let recovering = false;
+let clientReady = false;
 function recover(reason) {
   if (recovering) return;
   recovering = true;
@@ -470,6 +502,7 @@ client.on('qr', (qr) => {
 });
 
 client.on('ready', () => {
+  clientReady = true;
   console.log('WhatsApp client ready!');
   console.log(`Monitoring ${groups.length} groups across ${getGroupsByCategory(groups).length} categories`);
   // Optional boot sanity check: run one real fetch and log the count (no Telegram).
@@ -481,31 +514,11 @@ client.on('ready', () => {
         const media = all.filter((e) => e.mediaType);
         const withId = media.filter((e) => e.mediaId);
         console.log(`[SELFTEST] ${Object.keys(h).length} groups, ${all.length} msgs, media=${media.length}, withMediaId=${withId.length}`);
-        // Find the canonical store key for the first media entry, then download.
         if (withId.length) {
-          const e0 = withId[0];
-          let canonical = null;
           try {
-            const diag = await client.pupPage.evaluate((sid) => {
-              const parts = sid.split('_');
-              const threePart = parts.slice(0, 3).join('_');
-              const msg = (window.Store && window.Store.Msg && (window.Store.Msg.get(sid) || window.Store.Msg.get(threePart))) || null;
-              return {
-                bySid: !!(window.Store && window.Store.Msg && window.Store.Msg.get(sid)),
-                byThree: !!(window.Store && window.Store.Msg && window.Store.Msg.get(threePart)),
-                canonical: msg && msg.id && msg.id._serialized ? msg.id._serialized : null,
-              };
-            }, e0.mediaId);
-            console.log(`[SELFTEST] idcheck: ${JSON.stringify(diag)}`);
-            canonical = diag.canonical;
-          } catch (err) { console.error(`[SELFTEST] idcheck failed: ${err.message}`); }
-          if (canonical) {
-            try {
-              const msg = await client.getMessageById(canonical);
-              const dl = msg && (await msg.downloadMedia());
-              console.log(`[SELFTEST] download: ${dl && dl.data ? `OK ${dl.mimetype} ${Buffer.from(dl.data, 'base64').length}b` : 'NO DATA'}`);
-            } catch (err) { console.error(`[SELFTEST] download failed: ${err.message}`); }
-          }
+            const dl = await downloadMediaById(withId[0].mediaId);
+            console.log(`[SELFTEST] download ${withId[0].mediaType}: ${dl && dl.data ? `OK ${dl.mimetype} ${Buffer.from(dl.data, 'base64').length}b` : 'NO DATA'}`);
+          } catch (err) { console.error(`[SELFTEST] download failed: ${err.message}`); }
         }
       } catch (e) {
         console.error(`[SELFTEST] ${e.code || e.message}`);
@@ -655,6 +668,12 @@ if (require.main === module) initBot({
 if (require.main === module) {
   client.initialize();
   console.log('WhatsApp Digest starting... scan QR code when prompted.');
+
+  // Init-timeout: some restarts hang before 'ready'. Self-heal instead of
+  // sitting dead — pm2 relaunches, and a fresh attempt usually connects fast.
+  setTimeout(() => {
+    if (!clientReady && !recovering) recover('init timeout (no ready in 4 min)');
+  }, 4 * 60 * 1000);
 
   // Calendar "XCM" H-24 alerts (no-op unless CALENDAR_ICS_URL is set).
   initCalendarWatch(sendMessage);
