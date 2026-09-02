@@ -494,7 +494,14 @@ client.on('ready', () => {
               if (['image', 'video', 'document', 'sticker', 'audio', 'ptt', 'gif'].includes(t)) {
                 out.mediaSeen++;
                 if (m.id && m.id._serialized) out.idHasSerialized++;
-                if (!out.sample) out.sample = { type: t, idType: typeof m.id, hasSer: !!(m.id && m.id._serialized), size: m.size, filename: m.filename || null };
+                if (!out.sample) out.sample = {
+                  type: t,
+                  idKeys: m.id && typeof m.id === 'object' ? Object.keys(m.id) : String(m.id).slice(0, 30),
+                  idStr: (() => { try { return String(m.id); } catch (e) { return 'ERR'; } })().slice(0, 60),
+                  idToString: (m.id && m.id.toString) ? String(m.id.toString()).slice(0, 60) : null,
+                  rawId: m.id && m.id.id ? String(m.id.id).slice(0, 40) : null,
+                  hasGetMsgById: typeof window.WPP?.chat?.getMessageById,
+                };
               }
             }
           }
