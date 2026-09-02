@@ -7,15 +7,21 @@
     "start": "node index.js",
     "test": "node test/logic.test.js"
   },
-  "keywords": ["whatsapp", "telegram", "digest", "claude"],
+  "keywords": [
+    "whatsapp",
+    "telegram",
+    "digest",
+    "claude"
+  ],
   "author": "dpilot777",
   "license": "MIT",
   "dependencies": {
-    "whatsapp-web.js": "^1.26.0",
-    "qrcode-terminal": "^0.12.0",
-    "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.66.0",
     "axios": "^1.7.9",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3",
+    "node-ical": "^0.27.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
   }
 }

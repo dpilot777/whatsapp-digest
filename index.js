@@ -6,6 +6,7 @@ const cron = require('node-cron');
 const { parseConfig, getGroupsByCategory, getChatIdSet } = require('./config');
 const { summarizeMessages, describeImage } = require('./summarize');
 const { initBot, sendMessage, sendMediaAlbum, sendDocumentFile } = require('./telegram');
+const { initCalendarWatch } = require('./calendar');
 
 // ── Config ──────────────────────────────────────────────────
 const groups = parseConfig();
@@ -621,6 +622,9 @@ if (require.main === module) initBot({
 if (require.main === module) {
   client.initialize();
   console.log('WhatsApp Digest starting... scan QR code when prompted.');
+
+  // Calendar "XCM" H-24 alerts (no-op unless CALENDAR_ICS_URL is set).
+  initCalendarWatch(sendMessage);
 
   // Health watchdog: a detached/dead page is caught within minutes and healed
   // (pm2 relaunch) instead of silently sending empty digests for days.

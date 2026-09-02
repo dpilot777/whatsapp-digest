@@ -9,6 +9,7 @@ const {
   mapLimit,
   isPageDeadError,
 } = require('../index');
+const cal = require('../calendar');
 
 let passed = 0;
 const failures = [];
@@ -147,6 +148,37 @@ async function test(name, fn) {
     assert.ok(!isPageDeadError(new Error('chat introuvable')));
     assert.ok(!isPageDeadError(new Error('ETELEGRAM: 502 Bad Gateway')));
     assert.ok(!isPageDeadError(undefined));
+  });
+
+  console.log('\ncalendar — XCM match, H-24 alert timing, dedup');
+  await test('matchesXCM: case-insensitive, in title', () => {
+    assert.ok(cal.matchesXCM('XCM demandé'));
+    assert.ok(cal.matchesXCM('GVA - CDG R2 ok xcm ok'));
+    assert.ok(!cal.matchesXCM('réunion équipage'));
+    assert.ok(!cal.matchesXCM(null));
+  });
+  await test('alertTimeFor: timed = start-24h, all-day = start-15h', () => {
+    const start = new Date('2026-09-07T15:00:00Z');
+    assert.strictEqual(+cal.alertTimeFor(start, false), +new Date('2026-09-06T15:00:00Z'));
+    assert.strictEqual(+cal.alertTimeFor(start, true), +new Date(start.getTime() - 15 * 3600 * 1000));
+  });
+  await test('dueAlerts: fires only once H-24 reached, before start, unless already alerted', () => {
+    const now = new Date('2026-09-06T15:05:00Z'); // just past H-24 of a 09-07T15:00 event
+    const occ = [
+      { uid: 'A', start: new Date('2026-09-07T15:00:00Z'), isAllDay: false, summary: 'XCM A' }, // due
+      { uid: 'B', start: new Date('2026-09-08T15:00:00Z'), isAllDay: false, summary: 'XCM B' }, // >24h → not yet
+      { uid: 'C', start: new Date('2026-09-06T10:00:00Z'), isAllDay: false, summary: 'XCM C' }, // already started
+    ];
+    const due = cal.dueAlerts(occ, now, new Set());
+    assert.strictEqual(due.length, 1);
+    assert.strictEqual(due[0].uid, 'A');
+    // already-alerted key suppresses it
+    assert.strictEqual(cal.dueAlerts(occ, now, new Set([cal.dedupKey('A', occ[0].start)])).length, 0);
+  });
+  await test('dueAlerts: event added late (<24h out) alerts immediately', () => {
+    const now = new Date('2026-09-06T15:05:00Z');
+    const late = [{ uid: 'D', start: new Date('2026-09-06T18:00:00Z'), isAllDay: false, summary: 'XCM D' }];
+    assert.strictEqual(cal.dueAlerts(late, now, new Set()).length, 1);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
